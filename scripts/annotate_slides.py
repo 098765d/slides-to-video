@@ -1,45 +1,32 @@
 #!/usr/bin/env python3
-"""Generate subtle arrow-annotated slide PNGs from visual anchor notes.
+"""Generate pointer-annotated slide PNGs from visual anchor notes.
 
-The tool keeps the annotation model intentionally simple: each cue points to one
-normalized target coordinate on a rendered slide. An optional normalized
-``from`` coordinate can control where the arrow starts; otherwise a short,
-nearby origin is chosen automatically.
+Each visual cue points to one normalized target coordinate on a rendered slide.
 
-Visual notes format (YAML):
+Example visual_notes.yaml:
 
 slides:
   - slide: 8
-    title: Model evaluation
     visuals:
       - id: A
-        location: left
         element: confusion matrix
         target: [0.27, 0.53]
-      - id: B
-        location: middle-right
-        element: missed detections card
-        target: [0.62, 0.66]
-        from: [0.70, 0.60]   # optional
 
 Usage:
   python3 annotate_slides.py SLIDES_DIR visual_notes.yaml OUTDIR
   python3 annotate_slides.py SLIDES_DIR visual_notes.yaml OUTDIR \
       --script narration_script.md
 
-If --script is supplied, cue markers in the script are validated against the
-visual notes and only cues actually used by the narration are rendered.
+If --script is supplied, only cues actually used in the narration are rendered.
 """
 
 from __future__ import annotations
 
 import argparse
-import math
 import re
-import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Set
 
 import yaml
 from PIL import Image, ImageDraw
@@ -48,37 +35,12 @@ from PIL import Image, ImageDraw
 SLIDE_RE = re.compile(r"^##\s+Slide\s+(\d+)\b", re.M)
 CUE_RE = re.compile(r"\[([A-Z])\]")
 
-
-def load_notes(path: str) -> Dict[int, Dict[str, dict]]:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    rows = data.get("slides", data if isinstance(data, list) else None)
-    if not isinstance(rows, list):
-        sys.exit("visual notes must contain a top-level 'slides:' list")
-
-    out: Dict[int, Dict[str, dict]] = {}
-    for slide_row in rows:
-        if not isinstance(slide_row, dict) or "slide" not in slide_row:
-            sys.exit("each visual-notes slide entry needs a numeric 'slide' field")
-        slide_no = int(slide_row["slide"])
-        anchors: Dict[str, dict] = {}
-        for item in slide_row.get("visuals", []) or []:
-            if not isinstance(item, dict):
-                sys.exit(f"slide {slide_no}: every visual anchor must be a mapping")
-            cue = str(item.get("id", "")).strip().upper()
-            if not re.fullmatch(r"[A-Z]", cue):
-                sys.exit(f"slide {slide_no}: visual anchor id must be A-Z, got {cue!r}")
-            target = item.get("target")
-            validate_point(target, f"slide {slide_no} cue {cue} target")
-            if "from" in item and item["from"] is not None:
-                validate_point(item["from"], f"slide {slide_no} cue {cue} from")
-            if cue in anchors:
-                sys.exit(f"slide {slide_no}: duplicate visual anchor [{cue}]")
-            anchors[cue] = item
-        out[slide_no] = anchors
-    return out
+# Fixed visual style.
+POINTER_COLOR = (11, 93, 70, 255)   # #0B5D46
+POINTER_SIZE_RATIO = 0.028
 
 
-def validate_point(point: object, label: str) -> None:
+def validate_point(point, label: str) -> None:
     if not (
         isinstance(point, (list, tuple))
         and len(point) == 2
@@ -88,180 +50,201 @@ def validate_point(point: object, label: str) -> None:
         sys.exit(f"{label} must be [x, y] with values between 0 and 1")
 
 
+def load_notes(path: str) -> Dict[int, Dict[str, dict]]:
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    slides = data.get("slides")
+
+    if not isinstance(slides, list):
+        sys.exit("visual_notes.yaml must contain a top-level 'slides:' list")
+
+    notes: Dict[int, Dict[str, dict]] = {}
+
+    for slide in slides:
+        slide_no = int(slide["slide"])
+        anchors: Dict[str, dict] = {}
+
+        for item in slide.get("visuals", []) or []:
+            cue = str(item.get("id", "")).strip().upper()
+
+            if not re.fullmatch(r"[A-Z]", cue):
+                sys.exit(
+                    f"slide {slide_no}: cue id must be one letter A-Z"
+                )
+
+            validate_point(
+                item.get("target"),
+                f"slide {slide_no} cue {cue} target",
+            )
+
+            if cue in anchors:
+                sys.exit(f"slide {slide_no}: duplicate cue [{cue}]")
+
+            anchors[cue] = item
+
+        notes[slide_no] = anchors
+
+    return notes
+
+
 def parse_used_cues(script_path: str) -> Dict[int, Set[str]]:
-    """Return {slide: {A,B,...}} from cue markers inside **Say:** blocks."""
+    """Return cue markers used inside each slide's **Say:** block."""
     text = Path(script_path).read_text(encoding="utf-8")
     matches = list(SLIDE_RE.finditer(text))
     used: Dict[int, Set[str]] = {}
-    for idx, m in enumerate(matches):
-        slide_no = int(m.group(1))
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
-        block = text[m.start():end]
+
+    for i, match in enumerate(matches):
+        slide_no = int(match.group(1))
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        block = text[match.start():end]
+
         say = re.search(
             r"\*\*Say:\*\*\s*(.*?)(?=\n\*\*[A-Za-z][^\n]*\*\*:|\n---|\Z)",
             block,
             re.S,
         )
-        if not say:
-            continue
-        used[slide_no] = set(CUE_RE.findall(say.group(1)))
+
+        if say:
+            used[slide_no] = set(CUE_RE.findall(say.group(1)))
+
     return used
 
 
-def hex_color(s: str) -> Tuple[int, int, int, int]:
-    s = s.strip().lstrip("#")
-    if len(s) != 6 or not re.fullmatch(r"[0-9a-fA-F]{6}", s):
-        sys.exit("--color must be a 6-digit hex colour such as E63946")
-    return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
+def locate_slide(slides_dir: str, slide_no: int) -> Path:
+    for name in (
+        f"slide-{slide_no:02d}.png",
+        f"slide-{slide_no}.png",
+    ):
+        path = Path(slides_dir) / name
+        if path.exists():
+            return path
+
+    sys.exit(
+        f"slide {slide_no}: could not find rendered PNG in {slides_dir}"
+    )
 
 
-def auto_origin(tx: float, ty: float) -> Tuple[float, float]:
-    """Choose a short nearby origin for a subtle local pointer."""
-    dx = -0.075 if tx >= 0.5 else 0.075
-    dy = -0.055 if ty >= 0.45 else 0.055
-    sx = min(0.94, max(0.06, tx + dx))
-    sy = min(0.93, max(0.07, ty + dy))
-    return sx, sy
-
-
-def draw_arrow(
-    image: Image.Image,
-    start_n: Sequence[float],
-    target_n: Sequence[float],
-    color: Tuple[int, int, int, int],
-    width_ratio: float,
-    head_ratio: float,
-) -> Image.Image:
+def draw_pointer(image: Image.Image, target) -> Image.Image:
+    """Draw a compact cursor-style pointer with small attention rays."""
     im = image.convert("RGBA")
     draw = ImageDraw.Draw(im)
-    w, h = im.size
 
-    sx, sy = float(start_n[0]) * w, float(start_n[1]) * h
-    tx, ty = float(target_n[0]) * w, float(target_n[1]) * h
+    w, _ = im.size
+    tx = float(target[0]) * im.width
+    ty = float(target[1]) * im.height
 
-    # More restrained defaults than the original implementation.
-    line_w = max(3, int(round(w * width_ratio)))
-    head = max(12, int(round(w * head_ratio)))
-    halo_w = line_w + max(2, line_w // 3)
+    size = max(22, int(round(w * POINTER_SIZE_RATIO)))
+    outline_w = max(3, int(round(size * 0.085)))
+    ray_w = max(2, int(round(size * 0.065)))
 
-    dx, dy = tx - sx, ty - sy
-    length = max(1.0, math.hypot(dx, dy))
-    ux, uy = dx / length, dy / length
-    px, py = -uy, ux
+    tip = (tx, ty)
 
-    # Pull the shaft back slightly so the arrowhead owns the target end.
-    bx, by = tx - ux * head * 0.82, ty - uy * head * 0.82
-    left = (bx + px * head * 0.46, by + py * head * 0.46)
-    right = (bx - px * head * 0.46, by - py * head * 0.46)
+    points = [
+        tip,
+        (tx - size * 0.16, ty - size * 0.88),
+        (tx + size * 0.50, ty - size * 0.28),
+        (tx + size * 0.18, ty - size * 0.14),
+        (tx + size * 0.40, ty + size * 0.36),
+        (tx + size * 0.18, ty + size * 0.46),
+        (tx - size * 0.04, ty - size * 0.02),
+    ]
 
-    # Softer white halo: enough contrast without making the pointer look bulky.
-    halo = (255, 255, 255, 210)
-    draw.line((sx, sy, bx, by), fill=halo, width=halo_w)
-    draw.polygon([left, (tx, ty), right], fill=halo)
+    draw.polygon(points, fill=(255, 255, 255, 242))
+    draw.line(
+        [*points, tip],
+        fill=POINTER_COLOR,
+        width=outline_w,
+        joint="curve",
+    )
 
-    draw.line((sx, sy, bx, by), fill=color, width=line_w)
-    draw.polygon([left, (tx, ty), right], fill=color)
+    rays = [
+        (
+            (tx - size * 0.27, ty - size * 0.69),
+            (tx - size * 0.45, ty - size * 0.89),
+        ),
+        (
+            (tx - size * 0.03, ty - size * 0.84),
+            (tx - size * 0.04, ty - size * 1.08),
+        ),
+        (
+            (tx + size * 0.19, ty - size * 0.72),
+            (tx + size * 0.34, ty - size * 0.91),
+        ),
+    ]
+
+    for start, end in rays:
+        draw.line(
+            [start, end],
+            fill=POINTER_COLOR,
+            width=ray_w,
+        )
+
     return im
 
 
-def locate_slide(slides_dir: str, slide_no: int) -> Optional[Path]:
-    candidates = [
-        Path(slides_dir) / f"slide-{slide_no:02d}.png",
-        Path(slides_dir) / f"slide-{slide_no}.png",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
-
-
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("slides_dir")
-    ap.add_argument("visual_notes")
-    ap.add_argument("outdir")
-    ap.add_argument("--script", help="optional narration script for cue validation")
-    ap.add_argument(
-        "--color",
-        default="E63946",
-        help="arrow colour, hex without #",
+    parser = argparse.ArgumentParser()
+    parser.add_argument("slides_dir")
+    parser.add_argument("visual_notes")
+    parser.add_argument("outdir")
+    parser.add_argument(
+        "--script",
+        help="optional narration script; only used cues will be rendered",
     )
-    ap.add_argument(
-        "--width-ratio",
-        type=float,
-        default=0.0030,
-        help="arrow shaft width as a fraction of image width",
-    )
-    ap.add_argument(
-        "--head-ratio",
-        type=float,
-        default=0.011,
-        help="arrowhead size as a fraction of image width",
-    )
-    ap.add_argument(
-        "--copy-clean",
-        action="store_true",
-        help="also copy clean slide PNGs into OUTDIR as slide-XX-base.png",
-    )
-    a = ap.parse_args()
+    args = parser.parse_args()
 
-    notes = load_notes(a.visual_notes)
-    used = parse_used_cues(a.script) if a.script else None
-    outdir = Path(a.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    color = hex_color(a.color)
+    notes = load_notes(args.visual_notes)
+    used = parse_used_cues(args.script) if args.script else None
 
-    # Validate cue references before writing any outputs.
+    # Validate script cues before writing outputs.
     if used is not None:
-        errors: List[str] = []
+        errors = []
+
         for slide_no, cues in sorted(used.items()):
             anchors = notes.get(slide_no, {})
+
             for cue in sorted(cues):
                 if cue not in anchors:
                     errors.append(
                         f"slide {slide_no}: script uses [{cue}] "
                         "but visual_notes has no matching anchor"
                     )
-        if errors:
-            sys.exit("visual cue validation failed:\n  - " + "\n  - ".join(errors))
 
-    rendered = 0
-    for slide_no, anchors in sorted(notes.items()):
-        src = locate_slide(a.slides_dir, slide_no)
-        if not src:
+        if errors:
             sys.exit(
-                f"slide {slide_no}: could not find rendered slide PNG "
-                f"in {a.slides_dir}"
+                "visual cue validation failed:\n  - "
+                + "\n  - ".join(errors)
             )
 
-        if a.copy_clean:
-            shutil.copy2(src, outdir / f"slide-{slide_no:02d}-base.png")
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-        wanted: Iterable[str] = anchors.keys()
+    rendered = 0
+
+    for slide_no, anchors in sorted(notes.items()):
+        src = locate_slide(args.slides_dir, slide_no)
+
+        wanted = anchors.keys()
         if used is not None:
-            wanted = [c for c in anchors if c in used.get(slide_no, set())]
+            wanted = [
+                cue for cue in anchors
+                if cue in used.get(slide_no, set())
+            ]
 
         with Image.open(src) as base:
             for cue in wanted:
                 anchor = anchors[cue]
-                target = [float(v) for v in anchor["target"]]
-                start = anchor.get("from")
-                if start is None:
-                    start = auto_origin(target[0], target[1])
+                annotated = draw_pointer(base, anchor["target"])
 
-                annotated = draw_arrow(
-                    base,
-                    start,
-                    target,
-                    color,
-                    a.width_ratio,
-                    a.head_ratio,
-                )
                 out = outdir / f"slide-{slide_no:02d}-{cue}.png"
-                annotated.convert("RGB").save(out, "PNG", optimize=True)
-                rendered += 1
+                annotated.convert("RGB").save(
+                    out,
+                    "PNG",
+                    optimize=True,
+                )
 
+                rendered += 1
                 element = str(anchor.get("element", "")).strip()
+
                 print(
                     f"slide {slide_no} [{cue}] -> {out.name}"
                     + (f" ({element})" if element else "")
