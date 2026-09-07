@@ -1,115 +1,225 @@
-# Architecture — 原理图 & 设计图
+# Architecture — Visual-Grounded Slides-to-Video
 
-## 原理图：why it works
+## Why this design exists
+
+The pipeline solves two different problems:
+
+1. **Narration grounding** — the voice should refer to the correct chart, table,
+   screenshot region, metric, or diagram element rather than producing generic
+   slide summaries.
+2. **Video stability** — the final video should remain synchronized and avoid
+   flicker or black frames at cue/slide transitions.
+
+The design deliberately uses a small visual-control layer instead of PowerPoint
+animations or word-level speech alignment.
+
+---
+
+## End-to-end flow
 
 ```mermaid
 flowchart LR
-    A[用户 query<br/>+ deck.pptx/pdf<br/>+ 可选 TTS key] --> B[Stage 1<br/>slides_to_png.py<br/>高分辨率 PNG×N]
-    B --> C[Stage 2<br/>视觉理解 + 讲稿设计<br/>narration_script.md]
-    A --> C
-    C --> G{用户审阅 / 修改<br/>HARD GATE}
-    G -- OK --> D[Stage 3<br/>tts_narration.py<br/>edge-tts 或 OpenAI-compatible]
-    B --> E
-    D --> E[Stage 4<br/>assemble_video.py<br/>单次 ffmpeg filtergraph]
-    E --> F[Stage 5<br/>ffprobe 校验<br/>→ 1080p MP4]
+    A[User request + PPTX/PDF] --> B[slides_to_png.py]
+    B --> C[High-resolution slide PNGs]
+    C --> D[Visual inspection]
+    D --> E[visual_notes.yaml\nanchors + normalized targets]
+    D --> F[narration_script.md\n[A]/[B]/[C] cue markers]
+    E --> G[annotate_slides.py]
+    F --> G
+    G --> H[Arrow-annotated cue PNGs]
+    E --> I{Human review gate}
+    F --> I
+    H --> I
+    I -- approved --> J[tts_narration.py]
+    J --> K[Cue-level MP3s + manifest.json]
+    C --> L[assemble_video.py]
+    H --> L
+    K --> L
+    L --> M[One ffmpeg filtergraph]
+    M --> N[1080p H.264/AAC MP4]
 ```
 
-## Four core principles
+---
 
-1. **讲稿即主时钟**  
-   每页停留时长 = 该页 TTS 实测时长 + breathing pad，音画天然同步。
+## Core data model
 
-2. **单次编码消闪烁**  
-   不把每页单独编码成 mp4 再拼接。所有页面在一个 ffmpeg filtergraph 中
-   统一 `trim + setpts + concat` 后一次编码，避免页间时间戳、关键帧和
-   pixel-format 接缝。
+### Visual anchor
 
-3. **渲染后的 slide 同时也是讲稿理解输入**  
-   PNG 不只用于最后的视频画面。Stage 2 应观察图表、表格、截图、流程图、
-   高亮区域、视觉层级和空间关系，以此决定一个真实讲者会怎样讲，而不是
-   仅把抽取出的文本改写成语音。
+A visual anchor identifies one meaningful target on one slide:
 
-4. **人类审阅门禁**  
-   讲稿是纯 Markdown，在任何 TTS 调用前必须让用户审阅/修改。
+```yaml
+- id: B
+  location: middle-right
+  element: missed detections card
+  target: [0.62, 0.66]
+```
 
-## 设计图：components & data flow
+`target` uses normalized coordinates so the same anchor works at different
+render resolutions.
+
+### Narration cue
+
+The narration uses the same anchor id:
+
+```markdown
+[B] The value to focus on is missed detections.
+```
+
+The cue marker is metadata; it is not spoken.
+
+### Rendered cue frame
+
+`annotate_slides.py` creates:
+
+```text
+slide-08-B.png
+```
+
+with one arrow pointing at the anchor target.
+
+### Audio segment
+
+`tts_narration.py` creates:
+
+```text
+slide-08-B-01.mp3
+```
+
+and writes its measured duration to `manifest.json`.
+
+The result is a deterministic relationship:
+
+```text
+spoken cue block ↔ visual target ↔ annotated frame ↔ measured audio duration
+```
+
+---
+
+## Five design principles
+
+### 1. Rendered slides are reasoning input
+
+The slide PNGs are used to understand layout, hierarchy, charts, tables,
+screenshots, diagrams, and highlighted regions. Extracted text alone is not
+sufficient.
+
+### 2. Visual references are contractual, not decorative
+
+When narration explicitly says “on the right”, “this chart”, “the last column”,
+or similar, the reference should correspond to an anchor derived from the
+rendered slide.
+
+This prevents polished-sounding but incorrect spatial narration.
+
+### 3. Cue-level audio is the master clock
+
+Each cue block has its own measured TTS duration.
+
+```text
+cue frame duration = measured cue audio + small cue pad
+```
+
+The final cue on a slide receives the normal slide breathing pad.
+
+No word-level timestamps are required.
+
+### 4. Static annotated PNGs are more stable than presentation animations
+
+Instead of replaying PowerPoint animations or simulating a mouse cursor, the
+pipeline produces a small set of deterministic PNG variants:
+
+```text
+slide-08.png       clean
+slide-08-A.png     arrow to A
+slide-08-B.png     arrow to B
+```
+
+This works consistently for PPTX and PDF inputs.
+
+### 5. The final video is encoded once
+
+All cue frames and audio segments enter one ffmpeg filtergraph. The pipeline does
+not create many MP4 fragments and concatenate them afterward.
+
+This avoids timestamp discontinuities, keyframe mismatches, pixel-format seams,
+and visible page-turn flicker.
+
+---
+
+## Component view
 
 ```mermaid
 flowchart TB
     subgraph Input
-        Q[query 解析<br/>语言 / 场景 / 时长 / TTS]
-        D[deck.pptx | deck.pdf]
+        D[deck.pptx / deck.pdf]
+        Q[user request\nlanguage / audience / duration / TTS]
     end
 
     subgraph Render
-        S1[slides_to_png.py<br/>LibreOffice → PDF → pdftoppm]
+        R[slides_to_png.py]
         P[slides/slide-01..N.png]
     end
 
-    subgraph Narration
-        V[视觉理解<br/>slide purpose + hierarchy + evidence]
-        M[narration_script.md<br/>★ 用户可编辑]
-        S2[tts_narration.py<br/>edge | openai]
-        U[audio/narr_01..N.mp3]
+    subgraph Grounding
+        V[visual slide inspection]
+        Y[visual_notes.yaml]
+        S[narration_script.md]
+        A[annotate_slides.py]
+        C[cues/slide-XX-A.png]
+    end
+
+    subgraph Speech
+        T[tts_narration.py]
+        AU[audio/*.mp3]
+        M[manifest.json]
     end
 
     subgraph Assembly
-        S3[assemble_video.py<br/>single-pass filtergraph]
-        OUT[1080p H.264/AAC MP4]
+        F[assemble_video.py]
+        O[one ffmpeg filtergraph]
+        OUT[H.264/AAC MP4]
     end
 
-    D --> S1 --> P
+    D --> R --> P
     Q --> V
-    P --> V --> M
-    M -. 用户审阅门禁 .-> S2
-    Q --> S2
-    S2 --> U
-    P & U --> S3 --> OUT
+    P --> V
+    V --> Y
+    V --> S
+    Y --> A
+    S --> A
+    P --> A --> C
+    S -. human review .-> T
+    T --> AU
+    T --> M
+    P --> F
+    C --> F
+    AU --> F
+    M --> F
+    F --> O --> OUT
 ```
 
-## Why the narration design stays flexible
+---
 
-The skill deliberately avoids style quotas such as:
+## Why not use PowerPoint animations?
 
-- "mention at least one visual element per slide";
-- "use a left/right reference on every content slide";
-- "always use orient → point → interpret → takeaway";
-- "describe every chart or table";
-- "make every slide 20–40 seconds".
+They are difficult to reproduce consistently in headless Linux pipelines and
+make PDF inputs impossible to treat equivalently.
 
-Those rules can make narration sound synthetic.
+Static cue PNGs are deterministic and renderer-independent.
 
-Instead, the system provides heuristics and asks the model to judge how a
-knowledgeable presenter would use each slide in context.
+## Why not use a moving mouse cursor?
 
-## Design decisions
+Cursor motion adds unnecessary timing complexity and often distracts from the
+content. A single arrow is enough to answer “where should I look?”
 
-| Decision | Reason |
-|---|---|
-| Only 3 implementation scripts | each pipeline step remains independently testable |
-| Rendered slide PNGs feed narration reasoning | prevents text-only slide summarisation |
-| Narration is Markdown | user can edit with any text editor |
-| `**Say:**` is the parser contract | reviewer notes can coexist without entering TTS |
-| Human review before TTS | narration interpretation remains user-controllable |
-| edge-tts default | free, multilingual, no API key |
-| OpenAI-compatible custom TTS | portable across compatible providers |
-| API keys only via env/CLI | avoids accidental persistence |
-| Single-pass video assembly | avoids page-turn flicker |
-| Missing audio → still slide | one TTS failure does not destroy the whole render |
+## Why not use word-level timestamps?
 
-## Flicker root cause
+Word alignment can provide very precise animation, but it adds TTS-provider
+coupling or forced-alignment dependencies. Cue-level segmentation gives most of
+the comprehension benefit with much lower implementation risk.
 
-```mermaid
-flowchart LR
-    subgraph BAD["❌ Separately encode segments, then concatenate"]
-        b1[seg1.mp4] & b2[seg2.mp4] & b3[seg3.mp4]
-        --> bc[timestamp / keyframe / pix_fmt seams]
-        --> bx[flicker / black frames]
-    end
+## Why keep uncued narration?
 
-    subgraph GOOD["✅ One filtergraph, one encode"]
-        g1[img1 + trim] & g2[img2 + trim] & g3[img3 + trim]
-        --> gc[setpts + concat filter]
-        --> gx[seamless video]
-    end
-```
+Not every sentence needs a pointer. Title slides, conceptual summaries, and
+transitions often work better with the clean slide. The cue system therefore
+supports both grounded and uncued/base narration within the same slide.

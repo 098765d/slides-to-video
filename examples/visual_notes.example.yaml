@@ -1,0 +1,27 @@
+slides:
+  - slide: 2
+    title: Example chart slide
+    visuals:
+      - id: A
+        location: left
+        element: main chart
+        target: [0.28, 0.50]
+
+      - id: B
+        location: upper-right
+        element: key result card
+        target: [0.78, 0.32]
+
+  - slide: 3
+    title: Example software walkthrough
+    visuals:
+      - id: A
+        location: top-left
+        element: navigation button
+        target: [0.18, 0.22]
+
+      - id: B
+        location: lower-right
+        element: confirmation button
+        target: [0.82, 0.78]
+        from: [0.65, 0.62]

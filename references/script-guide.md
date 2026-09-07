@@ -1,112 +1,223 @@
-# Narration Script Guide
+# Narration + Visual Cue Script Guide
 
-The script is the **master clock**: slide N stays on screen as long as its
-narration plus the configured pad.
+The goal is a voiceover that sounds like a knowledgeable presenter **and** keeps
+spoken references visibly connected to the slide.
 
-Write for the ear, but think with the slide.
+The deck is visual communication. The narrator should interpret, orient,
+explain, compare, guide actions, or connect ideas rather than merely read text.
 
-The objective is a voiceover that sounds like a real presenter using visual
-material, not a text-to-speech reading of slide content.
+The cue system is deliberately small:
 
-## Format contract
+**visual anchor note → narration cue marker → arrow-annotated slide PNG**
+
+It is meant to work reliably across arbitrary PPTX/PDF decks without requiring
+PowerPoint animations, mouse tracking, OCR pipelines, or word-level timing.
+
+---
+
+## 1. Visual anchor notes
+
+Before writing the narration, inspect the rendered slide image and record only
+the visual elements that genuinely help the explanation.
+
+Typical count:
+
+- title/divider: 0 anchors;
+- normal content slide: 1–3 anchors;
+- unusually complex instructional slide: up to 5 anchors.
+
+Do not annotate decoration, logos, repeated footer text, or every visible object.
+
+Example `visual_notes.yaml`:
+
+```yaml
+slides:
+  - slide: 8
+    title: Model evaluation
+    visuals:
+      - id: A
+        location: left
+        element: confusion matrix
+        target: [0.27, 0.53]
+
+      - id: B
+        location: middle-right
+        element: missed detections card
+        target: [0.62, 0.66]
+
+      - id: C
+        location: lower-right
+        element: false alarms card
+        target: [0.78, 0.66]
+```
+
+Each anchor needs:
+
+- `id`: one uppercase letter A–Z;
+- `location`: human-readable location used to ground spatial language;
+- `element`: semantic description of the visual target;
+- `target`: normalized `[x, y]` coordinate between 0 and 1.
+
+Optional:
+
+```yaml
+from: [0.83, 0.42]
+```
+
+This overrides the automatic arrow start point when the default arrow would
+cover content.
+
+Location alone is not enough.
+
+Weak:
+
+```yaml
+- id: A
+  location: top-right
+```
+
+Better:
+
+```yaml
+- id: A
+  location: top-right
+  element: model accuracy card
+  target: [0.82, 0.28]
+```
+
+---
+
+## 2. Narration format
 
 ```markdown
 # <Deck title> — Voiceover Script
 
-约 X 分钟 · 共 N 段
-
 ## Slide 1 — <slide title>
-**[~30s]**
-**On screen:** <optional: one-line description for the human reviewer>
+**[~20s]**
+
+**Visuals:**
+- [A] left — first chart
+- [B] right — summary card
+
 **Say:**
-<spoken text>
+[A] The chart on the left shows the historical pattern that matters for this
+comparison.
 
-**Pronounce:** <optional: URL/acronym/filename guidance>
+[B] The summary card on the right gives the current result.
 
-## Slide 2 — ...
+**Pronounce:** <optional pronunciation guidance>
 ```
 
-- `## Slide N — …` starts a block; N must be contiguous from 1.
-- `**Say:**` is the only field sent to TTS.
-- Everything else is for the human reviewer.
-- Bracket cues such as `[pause]` and `[breathe]` are removed before synthesis.
+Rules:
 
-## Presentation principle
+- `## Slide N` starts a slide block.
+- `**Say:**` contains spoken narration.
+- `[A]`, `[B]`, `[C]`, etc. are **visual control markers** and are not spoken.
+- A cue remains active until the next cue marker.
+- Text before the first cue marker is uncued/base narration and uses the clean
+  slide image.
+- `[pause]`, `[breathe]`, and similar bracketed delivery notes are not spoken.
+- `**Visuals:**` and `**Pronounce:**` are reviewer metadata, not TTS text.
 
-A slide and a voiceover should complement each other.
+---
 
-The viewer can already read the slide. The narrator should contribute something
-useful, such as:
-- interpretation,
-- emphasis,
-- visual orientation,
-- explanation,
-- comparison,
-- context,
-- reasoning,
-- action guidance,
-- or transition.
+## 3. Visual Reference Contract
 
-What is useful depends on the slide.
+If a spoken sentence explicitly refers to a visible object, it should normally
+be grounded to a supplied anchor.
 
-There is no requirement to mention a visual element on every slide. There is no
-required count of "left/right" references. There is no fixed narration template.
+Examples of visually grounded references:
 
-## Before writing a slide
+- “the chart on the left”;
+- “this value”;
+- “the button highlighted here”;
+- “the first row of the table”;
+- “the final column”;
+- “the diagram at the top”;
+- “the largest bar”.
 
-Silently consider:
+The contract is:
 
-- What is this slide doing in the overall story?
-- What will the audience naturally look at?
-- What is obvious from the slide already?
-- What might be misunderstood without explanation?
-- Is there a chart/table/screenshot/diagram that should shape the narration?
-- What is the one thing the audience should understand, remember, or do?
-- What should be left unsaid?
-- How does this slide connect to its neighbours?
+```text
+spoken claim
+    ↕
+visual cue id
+    ↕
+visual anchor note
+    ↕
+actual rendered-slide evidence
+```
 
-Use these questions to think, not to generate a checklist in the final script.
+If the narration says:
 
-## Natural visual grounding
+> The card on the right shows five detections.
 
-When visual reference helps comprehension, use it.
+then the slide must contain a matching anchor identifying that card and its
+location.
 
-Examples:
+If the target cannot be established confidently, rewrite without the spatial
+claim or omit the claim. Never invent screen position or visual precision just
+to sound like a presenter.
+
+---
+
+## 4. Use cues selectively
+
+Cue markers are not quotas.
+
+A cue is useful when it helps the audience answer **where should I look while
+hearing this sentence?**
+
+Good uses:
 
 ### Chart
-> The largest bar here is Year 2 GPA, so this variable contributes much more
-> strongly than the others in this example.
+
+```markdown
+[A] The largest bar is Year 2 GPA, so this variable contributes much more
+strongly than the others in this example.
+```
 
 ### Confusion matrix
-> The matrix on the right compares predictions with known outcomes. The number I
-> would focus on is missed detections, because those are at-risk students the
-> model failed to identify.
+
+```markdown
+[A] The matrix compares predictions with known outcomes.
+[B] The number to focus on is missed detections, because those are cases the
+model failed to identify.
+```
 
 ### Table
-> The table is ranked by correlation. Rather than reading every row, the main
-> point is that only courses above the 0.50 threshold appear here.
 
-### Screenshot
-> The option we need is highlighted in red. Open Download Programme Reports,
-> then find your programme and use the Details button at the end of its row.
+```markdown
+[A] Read the table from this correlation column rather than row by row. Higher
+values indicate a stronger association.
+```
+
+### Screenshot / software guide
+
+```markdown
+[A] Open the Download Reports tile here.
+[B] On the next screen, use the Details button at the end of the programme row.
+```
 
 ### Process diagram
-> The workflow starts with the uploaded deck, moves through script review and
-> narration, and finishes with a single-pass video assembly.
 
-### Comparison
-> The left panel describes the historical validation result, while the right
-> panel shows the current cohort prediction.
+```markdown
+[A] The process starts with the source data.
+[B] It then moves through the prediction model.
+[C] The final output is the programme-level result.
+```
 
-Use spatial wording only when it genuinely helps the viewer track the screen.
+Do not use arrows for:
 
-Do not fill every slide with:
-> "On the left… on the right… at the bottom…"
+- titles that need no explanation;
+- decorative illustrations;
+- generic transitions;
+- every bullet on a simple text slide;
+- visual elements that are not discussed.
 
-And do not repeatedly say:
-> "As you can see…"
+---
 
-## Explain rather than recite
+## 5. Explain rather than recite
 
 Weak:
 
@@ -114,131 +225,126 @@ Weak:
 
 Stronger:
 
-> The historical validation result shows 96 percent accuracy, but the more
-> important figure for this use case is missed detections. Here it is zero,
-> meaning no actually at-risk student in this validation example was missed.
-> There are four false alarms.
+```markdown
+[A] The historical validation result is summarized here. The number I would
+pay particular attention to is missed detections, because these are the cases
+the model failed to identify. In this example, that value is zero.
 
-Weak:
+[B] The trade-off is four false alarms.
+```
 
-> The prediction cohort is 2024. There are 109 students. Five are at risk.
+The stronger version is not better because it is longer. It is better because
+it tells the audience what matters and where to look.
 
-Stronger:
+---
 
-> The summary cards tell us that 109 students were analysed in the 2024 cohort,
-> and five were flagged as potentially at risk. The next question is who those
-> five students are, which is why the workflow now moves to the Excel file.
-
-## Let slide type influence the delivery
+## 6. Let slide type determine delivery
 
 These are heuristics, not templates.
 
 ### Title / divider
-Usually brief. Establish direction.
+Usually brief. Often no visual cue.
 
 ### Bullet / concept
-Synthesize rather than reading every bullet in sequence.
+Synthesize the idea rather than reading every bullet.
 
 ### Chart
-Help the audience notice the pattern, comparison, trend, outlier, or implication
-that matters.
+Direct attention to the relevant pattern, comparison, trend, outlier, or
+implication.
 
 ### Table
-Explain how the table should be read if necessary, then select the rows/columns
-needed for the message.
+Explain how to read it, then cue only the rows/columns needed for the message.
 
-### Dashboard / cards
-Group metrics and identify what matters. Do not read every card automatically.
+### Dashboard / metric cards
+Group related metrics. Cue only the values that deserve attention.
 
 ### Screenshot / user guide
-Guide the viewer through visible controls and actions. Use labels and location
-cues naturally.
+Use cues for the controls or regions where the user must act.
 
 ### Diagram / process
-Follow a logical visual path.
+Cue the visual sequence in the same logical order as the narration.
 
 ### Comparison
-Make the contrast explicit when that is the point.
-
-### Worked example
-Walk through the reasoning rather than only stating the answer.
+Use one cue per side/alternative when the contrast is the point.
 
 ### Appendix / reference
-Usually summarise its role or skip detail unless the user asks for it.
+Usually summarize its purpose or skip detailed narration.
 
-## Cross-slide continuity
+---
 
-The presentation should sound continuous.
+## 7. Cross-slide continuity
+
+The presentation should sound continuous, not like independent slide summaries.
 
 Useful transitions include:
-- "Now that we know how the model performed…"
-- "The next question is…"
-- "This brings us to…"
-- "To identify the individual students…"
 
-But do not attach a transition phrase to every slide mechanically.
+- “Now that we know how the model performed…”
+- “The next question is…”
+- “This brings us to…”
+- “To identify the individual records…”
 
-## Pacing
+Do not attach a transition to every slide mechanically.
 
-Let importance determine time.
+---
+
+## 8. Pacing
+
+Let importance determine speaking time.
 
 Brief:
-- title pages,
-- section dividers,
-- obvious navigation,
+
+- title pages;
+- section dividers;
+- obvious navigation;
 - reference slides.
 
 Longer:
-- unfamiliar concepts,
-- important charts,
-- dense tables,
-- multi-step user instructions,
+
+- unfamiliar concepts;
+- important figures;
+- dense tables;
+- multi-step user instructions;
 - consequential interpretation.
 
 Approximate rates:
-- English: about 2.0–2.3 words/sec
-- Chinese: about 3.5–4.5 chars/sec
 
-A user-provided overall time limit is more important than any default per-slide
-range.
+- English: about 2.0–2.3 words/sec;
+- Chinese: about 3.5–4.5 chars/sec.
 
-## Spoken style
+The user’s requested total duration takes priority over defaults.
 
-- Prefer one clear thought at a time.
-- Use natural sentence rhythm.
-- Avoid dense parenthetical prose.
-- Make filenames, acronyms, symbols, and URLs pronounceable.
-- Use `[pause]` only when a beat genuinely helps comprehension.
-- Keep domain terminology consistent with the slide deck.
-- Avoid repetitive AI-style phrases.
+---
 
-## Factual discipline
+## 9. Factual discipline
 
 Do not invent:
-- numbers,
-- labels,
-- trends,
-- positions,
-- controls,
-- causal explanations,
+
+- numbers;
+- labels;
+- trends;
+- positions;
+- controls;
+- table entries;
+- causal explanations;
 - or conclusions.
 
 If something cannot be read reliably, avoid false precision.
 
-## Final review
+---
 
-Read the complete `**Say:**` text aloud mentally from beginning to end.
+## 10. Final review
+
+Before TTS, review the complete script and visual notes together.
 
 Ask:
-- Does it sound like a real presenter?
-- Does it feel connected across slides?
-- Are complex visuals made easier to understand?
-- Does the narration add something beyond the visible text?
-- Are visual references used when useful, rather than by formula?
-- Is any slide over-explained?
-- Is any important slide under-explained?
-- Are instructions actionable?
-- Is anything repetitive?
-- Does the total timing fit the user's goal?
 
-These are editorial questions, not numerical requirements.
+- Does the narration sound like a knowledgeable human presenter?
+- Does every explicit visual/spatial reference have a matching anchor?
+- Does each cue point to the exact thing being discussed?
+- Are complex visuals easier to understand after hearing the narration?
+- Are cues selective rather than constant?
+- Are any arrows likely to cover important content?
+- Does the presentation remain coherent across slides?
+- Is the total duration appropriate?
+
+These are editorial questions, not numeric quotas.
