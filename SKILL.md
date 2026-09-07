@@ -89,6 +89,15 @@ A useful test:
 5. **Visual claims must be grounded.** Any narration that explicitly refers to a
    visible object or screen position must be supported by the rendered slide and,
    when a pointer is used, by a matching visual anchor.
+6. **Default TTS is external and decoupled from the host LLM.** If the user has
+   not explicitly configured a custom TTS provider, use `edge-tts` directly. Do
+   not probe the host model registry for a speech-capable LLM, and do not require
+   the reasoning model itself to output audio.
+7. **Do not overload vision inspection.** Before inspecting a full deck, test one
+   representative slide with an image-capable model. For medium/large decks, use
+   lower-resolution vision previews and small batches rather than sending all
+   full-resolution slide images to one request/subagent. Never retry a multimodal
+   failure indefinitely.
 
 ---
 
@@ -106,6 +115,17 @@ Determine from the user's request and attachments:
 - TTS provider and voice.
 
 Default TTS provider: `edge-tts`.
+
+### TTS backend selection
+
+Use an explicit backend decision before any speech-related capability check:
+
+1. If the user explicitly provides a custom OpenAI-compatible TTS configuration,
+   use that provider and require its base URL, model, voice, and runtime API key.
+2. Otherwise, use `edge-tts` directly.
+3. Do **not** query the host LLM/model registry for `speech` capability when the
+   selected backend is `edge-tts`. The video skill does not require the reasoning
+   model itself to support audio output.
 
 ### Suggested edge-tts voices
 
@@ -164,6 +184,74 @@ rendered slide.
 
 For long decks, inspect title/divider slides quickly and spend more attention on
 visually dense or consequential slides.
+
+---
+
+# Stage 1A — Prepare and batch visual inspection
+
+The high-resolution PNGs in `$BUILD/slides/` are the source for the final video.
+Do not downscale or overwrite them merely to make vision inspection cheaper.
+
+For visual reasoning, create temporary preview copies when the deck is medium,
+large, or rendered above 1920 px. A width around **1280 px** is a good default.
+Use the original high-resolution slide only when a preview is insufficient for a
+dense table, spreadsheet, code sample, or small UI text.
+
+## Vision capability smoke test
+
+Before delegating the whole deck, inspect **one representative slide** with an
+image-capable endpoint.
+
+- If the single-slide test succeeds, continue with batched visual inspection.
+- If the runtime reports that no image-capable endpoint exists, do not keep
+  retrying. Switch to the non-vision fallback below.
+- If one slide succeeds but a larger request fails, treat it as a likely scale,
+  payload, rate-limit, or provider issue rather than assuming vision is
+  unavailable.
+
+Do not infer image capability from a model name alone.
+
+## Default batching
+
+Do not send an entire medium or large deck of full-resolution images to one
+vision request or one subagent.
+
+Default: **1–4 slides per batch**, processed sequentially unless the runtime is
+known to handle concurrent multimodal requests reliably.
+
+For example, a 19-slide deck should normally be inspected as:
+
+- slides 1–4;
+- slides 5–8;
+- slides 9–12;
+- slides 13–16;
+- slides 17–19.
+
+Adaptive retry policy:
+
+1. smoke-test one slide;
+2. use ~1280 px previews with batch size 4;
+3. if a batch fails, retry once with batch size 2;
+4. if it still fails, use ~960 px previews and inspect one slide at a time;
+5. if single-slide inspection also fails, stop vision retries and use the
+   non-vision fallback.
+
+Never loop indefinitely on multimodal API failures.
+
+## Non-vision fallback
+
+If no usable image-capable endpoint is available:
+
+- continue with extracted slide text and document/PPT structure;
+- do not invent visual positions, arrows, or spatial claims such as “on the
+  right” unless the position is independently known;
+- omit unreliable visual anchors and use the clean slide image for those parts;
+- still generate the narrated video;
+- tell the user that visual grounding was limited for that run.
+
+Normalized anchor coordinates remain valid across preview and final render
+resolutions, so visual notes inferred from a preview can be applied to the
+high-resolution source slide.
 
 ---
 
@@ -261,6 +349,42 @@ First understand the deck-level story:
 - Is this a lecture, user guide, report, sales story, or another format?
 
 Then write slide by slide.
+
+## Narration Quality Contract
+
+The narration must be more than a slide summary. For each substantive slide,
+identify:
+
+1. **Audience question** — what should the viewer understand or do here?
+2. **Evidence** — which visible number, chart, table, control, or statement
+   supports the explanation?
+3. **Interpretation** — what does that evidence mean in this context?
+4. **Next action / connection** — what should the viewer do next, or how does
+   this lead to the next slide?
+
+When useful, follow the pattern:
+
+`orient → interpret → act/connect`
+
+Additional rules:
+
+- analytical slides should use concrete values when those values teach the
+  audience how to read the visual;
+- unfamiliar methods or metrics should receive a 1–3 sentence plain-language
+  explanation, including why they are used;
+- user-guide narration should prefer semantic labels over fragile Excel letters,
+  row numbers, or coordinates;
+- explicitly distinguish concepts that could otherwise appear contradictory,
+  such as an outcome definition versus a model-derived classification cutoff;
+- preserve exact department names, deadlines, and workflow details from the
+  source material;
+- central slides should normally add at least one useful interpretation or
+  operational insight beyond the visible text, while divider/reference slides
+  may remain brief;
+- do not add unsupported background claims. If the user provides extra project
+  rationale not shown on the slide, use it only when requested and keep source
+  discipline clear.
+
 
 ## Script format contract
 

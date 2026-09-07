@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate arrow-annotated slide PNGs from visual anchor notes.
+"""Generate subtle arrow-annotated slide PNGs from visual anchor notes.
 
 The tool keeps the annotation model intentionally simple: each cue points to one
-normalized target coordinate on a rendered slide.  An optional normalized
-``from`` coordinate can control where the arrow starts; otherwise a sensible
-start point is chosen automatically.
+normalized target coordinate on a rendered slide. An optional normalized
+``from`` coordinate can control where the arrow starts; otherwise a short,
+nearby origin is chosen automatically.
 
 Visual notes format (YAML):
 
@@ -20,7 +20,7 @@ slides:
         location: middle-right
         element: missed detections card
         target: [0.62, 0.66]
-        from: [0.78, 0.48]   # optional
+        from: [0.70, 0.60]   # optional
 
 Usage:
   python3 annotate_slides.py SLIDES_DIR visual_notes.yaml OUTDIR
@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
 import re
 import shutil
 import sys
@@ -98,7 +97,11 @@ def parse_used_cues(script_path: str) -> Dict[int, Set[str]]:
         slide_no = int(m.group(1))
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
         block = text[m.start():end]
-        say = re.search(r"\*\*Say:\*\*\s*(.*?)(?=\n\*\*[A-Za-z][^\n]*\*\*:|\n---|\Z)", block, re.S)
+        say = re.search(
+            r"\*\*Say:\*\*\s*(.*?)(?=\n\*\*[A-Za-z][^\n]*\*\*:|\n---|\Z)",
+            block,
+            re.S,
+        )
         if not say:
             continue
         used[slide_no] = set(CUE_RE.findall(say.group(1)))
@@ -113,11 +116,11 @@ def hex_color(s: str) -> Tuple[int, int, int, int]:
 
 
 def auto_origin(tx: float, ty: float) -> Tuple[float, float]:
-    """Choose a nearby origin that points inward without hugging the edge."""
-    dx = -0.18 if tx >= 0.5 else 0.18
-    dy = -0.14 if ty >= 0.45 else 0.14
-    sx = min(0.92, max(0.08, tx + dx))
-    sy = min(0.90, max(0.10, ty + dy))
+    """Choose a short nearby origin for a subtle local pointer."""
+    dx = -0.075 if tx >= 0.5 else 0.075
+    dy = -0.055 if ty >= 0.45 else 0.055
+    sx = min(0.94, max(0.06, tx + dx))
+    sy = min(0.93, max(0.07, ty + dy))
     return sx, sy
 
 
@@ -132,12 +135,14 @@ def draw_arrow(
     im = image.convert("RGBA")
     draw = ImageDraw.Draw(im)
     w, h = im.size
+
     sx, sy = float(start_n[0]) * w, float(start_n[1]) * h
     tx, ty = float(target_n[0]) * w, float(target_n[1]) * h
 
-    line_w = max(4, int(round(w * width_ratio)))
-    head = max(16, int(round(w * head_ratio)))
-    halo_w = line_w + max(4, line_w // 2)
+    # More restrained defaults than the original implementation.
+    line_w = max(3, int(round(w * width_ratio)))
+    head = max(12, int(round(w * head_ratio)))
+    halo_w = line_w + max(2, line_w // 3)
 
     dx, dy = tx - sx, ty - sy
     length = max(1.0, math.hypot(dx, dy))
@@ -146,11 +151,11 @@ def draw_arrow(
 
     # Pull the shaft back slightly so the arrowhead owns the target end.
     bx, by = tx - ux * head * 0.82, ty - uy * head * 0.82
-    left = (bx + px * head * 0.48, by + py * head * 0.48)
-    right = (bx - px * head * 0.48, by - py * head * 0.48)
+    left = (bx + px * head * 0.46, by + py * head * 0.46)
+    right = (bx - px * head * 0.46, by - py * head * 0.46)
 
-    # White halo improves legibility over screenshots, charts and dark areas.
-    halo = (255, 255, 255, 235)
+    # Softer white halo: enough contrast without making the pointer look bulky.
+    halo = (255, 255, 255, 210)
     draw.line((sx, sy, bx, by), fill=halo, width=halo_w)
     draw.polygon([left, (tx, ty), right], fill=halo)
 
@@ -176,13 +181,28 @@ def main() -> None:
     ap.add_argument("visual_notes")
     ap.add_argument("outdir")
     ap.add_argument("--script", help="optional narration script for cue validation")
-    ap.add_argument("--color", default="E63946", help="arrow colour, hex without #")
-    ap.add_argument("--width-ratio", type=float, default=0.0055,
-                    help="arrow shaft width as a fraction of image width")
-    ap.add_argument("--head-ratio", type=float, default=0.020,
-                    help="arrowhead size as a fraction of image width")
-    ap.add_argument("--copy-clean", action="store_true",
-                    help="also copy clean slide PNGs into OUTDIR as slide-XX-base.png")
+    ap.add_argument(
+        "--color",
+        default="E63946",
+        help="arrow colour, hex without #",
+    )
+    ap.add_argument(
+        "--width-ratio",
+        type=float,
+        default=0.0030,
+        help="arrow shaft width as a fraction of image width",
+    )
+    ap.add_argument(
+        "--head-ratio",
+        type=float,
+        default=0.011,
+        help="arrowhead size as a fraction of image width",
+    )
+    ap.add_argument(
+        "--copy-clean",
+        action="store_true",
+        help="also copy clean slide PNGs into OUTDIR as slide-XX-base.png",
+    )
     a = ap.parse_args()
 
     notes = load_notes(a.visual_notes)
@@ -198,7 +218,10 @@ def main() -> None:
             anchors = notes.get(slide_no, {})
             for cue in sorted(cues):
                 if cue not in anchors:
-                    errors.append(f"slide {slide_no}: script uses [{cue}] but visual_notes has no matching anchor")
+                    errors.append(
+                        f"slide {slide_no}: script uses [{cue}] "
+                        "but visual_notes has no matching anchor"
+                    )
         if errors:
             sys.exit("visual cue validation failed:\n  - " + "\n  - ".join(errors))
 
@@ -206,7 +229,10 @@ def main() -> None:
     for slide_no, anchors in sorted(notes.items()):
         src = locate_slide(a.slides_dir, slide_no)
         if not src:
-            sys.exit(f"slide {slide_no}: could not find rendered slide PNG in {a.slides_dir}")
+            sys.exit(
+                f"slide {slide_no}: could not find rendered slide PNG "
+                f"in {a.slides_dir}"
+            )
 
         if a.copy_clean:
             shutil.copy2(src, outdir / f"slide-{slide_no:02d}-base.png")
@@ -222,13 +248,24 @@ def main() -> None:
                 start = anchor.get("from")
                 if start is None:
                     start = auto_origin(target[0], target[1])
-                annotated = draw_arrow(base, start, target, color,
-                                       a.width_ratio, a.head_ratio)
+
+                annotated = draw_arrow(
+                    base,
+                    start,
+                    target,
+                    color,
+                    a.width_ratio,
+                    a.head_ratio,
+                )
                 out = outdir / f"slide-{slide_no:02d}-{cue}.png"
                 annotated.convert("RGB").save(out, "PNG", optimize=True)
                 rendered += 1
+
                 element = str(anchor.get("element", "")).strip()
-                print(f"slide {slide_no} [{cue}] -> {out.name}" + (f" ({element})" if element else ""))
+                print(
+                    f"slide {slide_no} [{cue}] -> {out.name}"
+                    + (f" ({element})" if element else "")
+                )
 
     print(f"CUES={rendered}")
 
