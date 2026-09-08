@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+.mimocode/
+video_build_*/
+build/
+*.mp4
+*.mp3
