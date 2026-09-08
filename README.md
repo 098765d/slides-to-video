@@ -12,6 +12,8 @@
 - 合成前先检查旁白、锚点和提示图；确认后才调用 TTS。
 - 所有画面和音频只经过一次 ffmpeg 编码，减少翻页闪烁和时间戳问题。
 
+![工作流程：从 PPTX/PDF 到带旁白的视频](assets/pipeline.png)
+
 ## 安装
 
 如果你通过 MiMoCode 使用本项目，直接发送：
@@ -85,6 +87,12 @@ python scripts/annotate_slides.py build/slides build/visual_notes.yaml build/cue
 - `build/cues/`：红点或红框是否覆盖了正确位置。
 
 发现问题就修改这三个文件，再重新运行第 3 步。
+
+提示样式和 cue 与音频的绑定方式如下：
+
+![视觉提示样式：原始画面、点状提示和区域提示](assets/cue-styles.png)
+
+![时间轴上的 cue 绑定](assets/cue-timeline.png)
 
 ### 4. 合成语音
 
