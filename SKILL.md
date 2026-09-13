@@ -101,6 +101,11 @@ Record anchors in `$BUILD/visual_notes.yaml`. Typical counts: title/divider 0,
 normal slide 1–3, complex instructional slide up to 5. Do not annotate
 decoration.
 
+Treat every `box:` written at this stage as a **coarse proposal** — models
+estimate coordinates well enough to say *which* element is meant, but poorly
+enough to cut labels or include white margin. Stage 2.5 snaps the box onto the
+actual rendered pixels; do not hand-tune coordinates yet.
+
 ## Anchor format
 
 Two cue styles, chosen by target shape:
@@ -132,6 +137,51 @@ description), and exactly one of `target` or `box` (normalized 0–1).
 Rule of thumb — **use a rectangle when highlighting an area** (table column or
 rows, a whole chart/table, a key-value card, a figure to spotlight); **use a
 laser dot when pointing at a point** (button, data point, label, diagram node).
+
+---
+
+# Stage 2.5 — Snap anchor boxes to content (tighten)
+
+```bash
+python3 scripts/tighten_boxes.py \
+  $BUILD/slides $BUILD/visual_notes.yaml --expand 150 --glue 8
+```
+
+Coarse boxes drift by tens of pixels, cut labels, or carry white margin. This
+one deterministic pass makes them exact:
+
+1. open a search window around each coarse box (`--expand` px);
+2. mask out every pixel that is not page-white;
+3. glue content closer than about `2 × --glue` px into blobs;
+4. keep the blob overlapping the coarse box the most, plus any blob lying
+   fully inside the coarse box (detached captions), and use that union's
+   bounding box as the new `box:`.
+
+Outputs `<notes>.tight.yaml` (the original is never modified) and one overlay
+PNG per affected slide — old box grey, new box red. Boxes that grew a lot are
+flagged on stdout.
+
+Two parameters, and that is deliberately all. **Do not add per-layout rules
+(multi-scale selection, container levels, prose trimming, …)** — every such
+rule was tried and each one broke a different layout:
+
+- `--expand` (default 150): search margin; large enough to recover an element
+  when the coarse box underestimates it;
+- `--glue` (default 8): fusion distance; must stay below half the smallest gap
+  between two different blocks, otherwise blocks merge.
+
+**ALWAYS look at the overlays before rendering cues.** Geometry measures edges
+well but cannot know which blobs belong to one element. Known failures, each
+fixed by hand in the yaml in seconds (the overlay makes them obvious):
+
+- an element inside a large card that also holds other content → the box may
+  swallow the whole card (shrink it by hand);
+- a detached fragment that sat just outside the coarse box (a caption, a
+  legend, one text line) → stays out (extend by hand);
+- a photo / gradient background has no "white page" reference → skip those
+  elements and keep the coarse box.
+
+Dot anchors (`target:`) are passed through unchanged.
 
 ---
 
@@ -214,6 +264,9 @@ Outputs `slide-08-A.png`, etc. `target` anchors become a red laser dot with a
 soft glow; `shape: rectangle` anchors become a clean red rectangle. Use one
 consistent style per cue type across the deck. This command fails if the script
 uses a cue with no matching anchor.
+
+Pass the tightened file (`visual_notes.tight.yaml`) once the Stage 2.5 overlays
+have been checked and any hand-fixes have been applied there.
 
 ---
 
@@ -306,6 +359,8 @@ user wants to reuse/edit cues).
 | edge-tts network/403 | retry once; otherwise switch provider |
 | custom API 401 | key wrong/expired; ask again, never store it |
 | script uses [B] but no anchor | fix visual_notes.yaml or remove the cue |
+| coarse box loose / cuts labels / keeps white margin | run `tighten_boxes.py`, then check its overlays |
+| tightened box swallowed a whole card or a paragraph | shrink that box by hand in the yaml (nested layout; the overlay shows it) |
 | dot/rectangle in the wrong place | correct `target` / `box` |
 | dot/rectangle covers text | nudge the point, or shrink/relocate the box |
 | narration = slide reading | reinspect the slide and rewrite around meaning/evidence |
@@ -327,6 +382,7 @@ slides-to-video/
 │   ├── slides_to_png.py      PPTX/PDF → high-res slide PNGs
 │   ├── win_pptx_to_png.ps1   Windows PPTX → PNG via PowerPoint COM
 │   ├── script_parser.py      shared narration-script parser (annotate + TTS)
+│   ├── tighten_boxes.py      coarse anchor boxes → pixel-tight boxes + overlays
 │   ├── annotate_slides.py    anchors → cue PNGs (laser dot / red rectangle)
 │   ├── tts_narration.py      cue script → per-cue MP3s + manifest
 │   └── assemble_video.py     clean/cue PNGs + manifest → single-pass MP4
@@ -342,6 +398,8 @@ slides-to-video/
 - `win_pptx_to_png.ps1` — Windows PPTX → PNG via PowerPoint COM (called by `slides_to_png.py`);
 - `script_parser.py` — single source of truth for the `## Slide N` / `**Say:**`
   format, shared by annotation and TTS;
+- `tighten_boxes.py` — snaps coarse anchor boxes onto the rendered content
+  (one deterministic pass, two parameters, writes review overlays);
 - `annotate_slides.py` — visual anchors → cue PNGs (laser dot or red rectangle);
 - `tts_narration.py` — cue-aware script → per-cue MP3s + `manifest.json`;
 - `assemble_video.py` — clean/cue PNGs + audio manifest → single-pass MP4;
