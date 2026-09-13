@@ -17,13 +17,8 @@ You need an agent that can install Skills and has at least one vision-capable mo
 点击下方视频即可在 GitHub 中打开并播放演示：  
 Click the link below to watch the complete demo on GitHub.
 
-| English demo | 中文配音演示 |
-|---|---|
-| [![Watch the demo](assets/pipeline.png)](assets/Demo%20Video.mp4) | [![观看中文演示](assets/pipeline.png)](assets/Demo%20Video%20CN.mp4) |
+[https://github.com/098765d/slides-to-video/releases/download/untagged-26aba6022cad1fa46369/DemoVideo_20260913_17282823.mp4](https://github.com/user-attachments/assets/f15a732f-f7da-41d6-9081-14a2844f6571)
 
-<video src="assets/Demo%20Video.mp4" controls width="800"></video>
-
-<video src="assets/Demo%20Video%20CN.mp4" controls width="800"></video>
 ## 推荐使用方式 | Recommended workflow
 
 ### 1. 在 Agent 中安装 Skill | Install the Skill
