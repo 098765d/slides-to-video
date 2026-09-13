@@ -1,186 +1,117 @@
-# Slides to Video：把幻灯片做成带旁白的视频
+# Slides to Video
 
-这个项目把 **PPTX 或 PDF** 转成 MP4 视频：先根据幻灯片画面编写旁白，再在需要的位置显示红点或红框提示。适合做产品演示、培训、课程讲解、报告回放和用户操作指南。
+把一份静态幻灯片变成带旁白和视觉提示的 MP4。你只需要把任务用自然语言告诉 AI Agent，由 Agent 按流程完成：理解幻灯片、安排讲解顺序、标出观众应该看的位置、生成语音并合成视频。
 
-它不会简单地把页面文字逐句念出来。旁白会说明这一页想表达的重点、数字之间的关系，以及观众应该看哪里。
+Turn a static slide deck into a narrated MP4 with visual cues. Describe the task in natural language and let an AI agent analyze the slides, plan the narration, point to the important areas, generate voice-over, and assemble the video.
 
-## 你会得到什么
+## 你需要什么 | What you need
 
-- 1080p MP4（默认 1920×1080）。
-- 与旁白同步的视觉提示：红点用于按钮、数据点等单个目标；红框用于表格列、图表或整块区域。
-- 每段旁白单独合成并记录实际时长，画面和声音自动同步。
-- 合成前先检查旁白、锚点和提示图；确认后才调用 TTS。
-- 所有画面和音频只经过一次 ffmpeg 编码，减少翻页闪烁和时间戳问题。
+- 一个支持安装 Skill 的 AI Agent，例如 **Codex、MiMo Code、Grok** 等。
+- Agent 至少具备一个**视觉大模型**，能够读取 PPTX/PDF 转出的幻灯片图片。
+- 你的幻灯片文件地址，以及希望使用的语音方式（例如 Edge TTS 或你所在平台支持的 TTS）。
 
-![工作流程：从 PPTX/PDF 到带旁白的视频](assets/pipeline.png)
+You need an agent that can install Skills and has at least one vision-capable model. Codex, MiMo Code, Grok, and similar agents can use this Skill.
 
-## 安装
+## 演示视频 | Demo video
 
-如果你通过 MiMoCode 使用本项目，直接发送：
+点击下方视频即可在 GitHub 中打开并播放演示：  
+Click the link below to watch the complete demo on GitHub.
+
+| English demo | 中文配音演示 |
+|---|---|
+| [![Watch the demo](assets/pipeline.png)](assets/Demo%20Video.mp4) | [![观看中文演示](assets/pipeline.png)](assets/Demo%20Video%20CN.mp4) |
+
+<video src="assets/Demo%20Video.mp4" controls width="800"></video>
+
+<video src="assets/Demo%20Video%20CN.mp4" controls width="800"></video>
+## 推荐使用方式 | Recommended workflow
+
+### 1. 在 Agent 中安装 Skill | Install the Skill
+
+把下面这句话直接发送给 Agent：
 
 ```text
-从这个 GitHub 仓库安装 slides-to-video 技能：
+从 GitHub 仓库安装 slides-to-video Skill：
 https://github.com/098765d/slides-to-video
 ```
 
-手动运行脚本时，先安装 Python 依赖：
-
-```bash
-pip install -r requirements.txt
-```
-
-还需要安装 `ffmpeg` 和 `ffprobe`。
-
-- **Windows**：PPTX 需要已安装 Microsoft PowerPoint；PDF 需要 Poppler。
-- **Linux/macOS**：需要 LibreOffice（把 PPTX 转成 PDF）和 Poppler（把 PDF 转成 PNG）。
-
-Ubuntu 示例：
-
-```bash
-sudo apt update
-sudo apt install -y ffmpeg poppler-utils libreoffice
-```
-
-## 五步快速开始
-
-下面假设输入文件叫 `deck.pptx`，所有中间文件放在 `build/`。
-
-### 1. 把幻灯片渲染成 PNG
-
-```bash
-# Windows 使用 python；Linux/macOS 可使用 python3
-python scripts/slides_to_png.py deck.pptx build/slides --width 1920
-```
-
-如果页面有密集表格或很小的字，可以把宽度改成 `2560`。
-
-### 2. 写视觉锚点和旁白
-
-复制 `examples/visual_notes.example.yaml` 和 `examples/narration_script.example.md`，分别保存为：
+Send the same request in English if preferred:
 
 ```text
-build/visual_notes.yaml
-build/narration_script.md
+Install the slides-to-video Skill from this GitHub repository:
+https://github.com/098765d/slides-to-video
 ```
 
-旁白用 `## Slide N` 分页，用 `[A]`、`[B]` 等标记切换提示画面。标记不会被读出来，例如：
+### 2. 让 Agent 根据幻灯片生成视频 | Ask the Agent to make the video
 
-```markdown
-## Slide 2 — Results
-**Say:**
-[A] 左侧图表显示了结果中的主要趋势。
-
-[B] 右上角卡片给出了最需要记住的数字。
-```
-
-### 3. 生成提示图并检查
-
-```bash
-python scripts/annotate_slides.py build/slides build/visual_notes.yaml build/cues \
-  --script build/narration_script.md
-```
-
-打开并检查以下内容：
-
-- `build/narration_script.md`：旁白是否准确、顺畅；
-- `build/visual_notes.yaml`：每个 `[A]`、`[B]` 是否都有对应锚点；
-- `build/cues/`：红点或红框是否覆盖了正确位置。
-
-发现问题就修改这三个文件，再重新运行第 3 步。
-
-提示样式和 cue 与音频的绑定方式如下：
-
-![视觉提示样式：原始画面、点状提示和区域提示](assets/cue-styles.png)
-
-![时间轴上的 cue 绑定](assets/cue-timeline.png)
-
-### 4. 合成语音
-
-默认使用免费的 `edge-tts`（需要联网，音色会按语言自动选择）：
-
-```bash
-python scripts/tts_narration.py build/narration_script.md build/audio
-```
-
-命令会生成分段 MP3 和 `build/audio/manifest.json`。也可以使用 OpenAI 兼容的 TTS 服务，详见[语音配置](#语音配置)。
-
-### 5. 合成视频
-
-```bash
-python scripts/assemble_video.py build/slides build/audio output.mp4 \
-  --cues-dir build/cues
-```
-
-最终视频保存在 `output.mp4`。脚本默认读取 `build/audio/manifest.json`。
-
-## 视觉锚点怎么写
-
-坐标都是 **0 到 1 的归一化值**，原点在左上角。点目标使用 `target: [x, y]`；区域目标使用 `shape: rectangle` 和 `box: [x, y, w, h]`，其中 `w`、`h` 是宽度和高度。
-
-```yaml
-slides:
-  - slide: 8
-    title: Model evaluation
-    visuals:
-      - id: A
-        element: confusion matrix
-        shape: rectangle
-        box: [0.12, 0.30, 0.40, 0.42]
-      - id: B
-        element: missed detections card
-        target: [0.62, 0.66]
-```
-
-每个 cue 必须有同名的 `id`。一个锚点对应一张提示图和一段音频；没有锚点的 cue 会在校验时报告错误。
-
-## 语音配置
-
-### edge-tts（默认）
-
-```bash
-python scripts/tts_narration.py build/narration_script.md build/audio \
-  --provider edge --voice zh-CN-YunxiNeural
-```
-
-### OpenAI 兼容接口
-
-不要把密钥写进脚本或提交到 Git。通过参数或环境变量传入：
-
-```bash
-export TTS_API_KEY="..."
-export TTS_BASE_URL="https://host/v1"
-export TTS_MODEL="tts-model"
-python scripts/tts_narration.py build/narration_script.md build/audio \
-  --provider openai --voice default
-```
-
-也可以显式传入 `--base-url`、`--api-key` 和 `--model`。
-
-## 常见问题
-
-**PPTX 无法渲染**：Windows 请确认 PowerPoint 已安装并能正常打开文件；Linux/macOS 请确认 LibreOffice 已安装。
-
-**PDF 无法渲染**：确认 `pdftoppm` 可在终端直接运行（它由 Poppler 提供）。
-
-**提示位置不对**：检查 `visual_notes.yaml` 中的归一化坐标；修改后重新运行 `annotate_slides.py`。
-
-**旁白和画面不同步**：不要手动改音频文件名或 `manifest.json`；重新运行 TTS，再运行视频合成。
-
-## 项目结构
+将文件地址、讲解目标和语音要求一次告诉 Agent。例如：
 
 ```text
-slides-to-video/
-├── scripts/
-│   ├── slides_to_png.py      # PPTX/PDF → PNG
-│   ├── annotate_slides.py    # 锚点 → 红点/红框提示图
-│   ├── tts_narration.py      # 旁白 → 分段音频和 manifest.json
-│   ├── assemble_video.py     # PNG + 音频 → MP4
-│   └── script_parser.py      # 旁白脚本解析
-├── examples/                 # 可复制的 YAML 和 Markdown 示例
-├── references/               # 旁白写作和设计说明
-├── assets/                   # 流程图和提示样式图
-├── requirements.txt
-└── SKILL.md                  # MiMoCode 使用的完整流程
+请使用 slides-to-video Skill，根据以下幻灯片生成带旁白和视觉提示的 MP4：
+文件：C:\\path\\to\\my-deck.pptx
+用途：给团队做 10 分钟项目汇报
+要求：先讲每页主旨，再在讲到图表或关键数字时用红框或红点提示
+语音：使用中文女声；如果默认 TTS 不可用，请使用当前 Agent 可用的 TTS
+输出：保存为 C:\\path\\to\\output.mp4
+完成后检查音画是否同步，并告诉我输出文件位置
 ```
 
-更详细的旁白写作规则见 [`references/script-guide.md`](references/script-guide.md)，设计原理见 [`references/architecture.md`](references/architecture.md)。
+English example:
+
+```text
+Use the slides-to-video Skill to turn this deck into a narrated MP4:
+Deck: /path/to/my-deck.pptx
+Purpose: a 10-minute project update for my team
+Narration: explain the main point of each slide, then highlight charts and key numbers with a red box or dot
+Voice: use an English female voice, or the TTS available in this agent
+Output: /path/to/output.mp4
+Check audio-video synchronization before finishing and report the output path
+```
+
+### 3. 根据需要继续修改 | Iterate in conversation
+
+你可以继续用自然语言提出修改：
+
+```text
+把第 4 页的旁白缩短到 30 秒。
+把第 7 页的红框移到右侧柱状图。
+语速放慢，改用更正式的语气。
+重新生成视频并覆盖上一版。
+```
+
+You can refine the result conversationally:
+
+```text
+Shorten slide 4 to 30 seconds.
+Move the cue on slide 7 to the bar chart on the right.
+Use a slower, more formal speaking style, then rebuild the video.
+```
+
+## 视频是怎样保持同步的 | How synchronization works
+
+Agent 会把一页幻灯片拆成多个画面：原始画面用于介绍整页，带红点或红框的画面用于讲解具体内容。每个画面对应一段音频，图片停留时间由该段音频的实际时长决定。
+
+The agent can split one slide into a base frame and cue frames. Each frame maps to exactly one audio clip, and the measured audio duration determines how long that frame stays on screen.
+
+![Audio-video alignment](assets/audio%20video%20alignment.png)
+
+视觉提示只是在原始幻灯片上叠加红点或红框，不会重绘或改写幻灯片内容。  
+Cues are drawn over the original slide, so the slide content remains unchanged.
+
+![Pipeline](assets/pipeline.png)
+
+## 输入与输出 | Inputs and outputs
+
+- **输入 | Input**：PPTX 或 PDF、讲解目标、语言和语音偏好
+- **输出 | Output**：带旁白、视觉提示和同步时间轴的 MP4
+- **中间结果 | Intermediate files**：幻灯片 PNG、视觉锚点、分段音频和时间清单（由 Agent 管理）
+
+## 如果 Agent 需要手动运行 | If the agent asks for commands
+
+通常无需手动执行命令。若 Agent 要求检查环境，请确保安装了 `ffmpeg`、`ffprobe`，以及用于渲染幻灯片的 PowerPoint、LibreOffice 或 Poppler。
+
+No manual commands are normally required. If the agent asks you to prepare the environment, install `ffmpeg`, `ffprobe`, and the slide-rendering tools available for your platform.
+
+更多旁白写作建议见 [references/script-guide.md](references/script-guide.md)。
+
+
