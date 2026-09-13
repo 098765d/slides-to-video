@@ -1,4 +1,6 @@
-# Slides to Video
+# A Slides-to-Video Skill with Guided Visual Attention 带视线引导的幻灯片视频生成 Skill
+
+<img src="assets/coverpageIMG.png" width="35%" />
 
 把一份静态幻灯片变成带旁白和视觉提示的 MP4。你只需要把任务用自然语言告诉 AI Agent，由 Agent 按流程完成：理解幻灯片、安排讲解顺序、标出观众应该看的位置、生成语音并合成视频。
 
